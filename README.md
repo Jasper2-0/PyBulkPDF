@@ -85,20 +85,21 @@ python pybulkpdf.py fill-form \
 
 1. **Run `generate-template` mode:** Provide your blank PDF form to generate the `_template.xlsx` and `_field_info.txt` files.
 2. **Populate the Excel Template:** Open the generated `_template.xlsx` file. Fill in the data for each PDF you want to create, one row per PDF.
-    * Make sure to fill the `_output_filename` column with the desired filename for each corresponding output PDF (e.g., `student1_assessment.pdf`). The `.pdf` extension is optional; it will be added if missing.
-    * Refer to the `_field_info.txt` file for guidance on values needed for checkboxes or dropdowns (e.g., `/Yes`, `/Off`, specific option text).
-    * You can delete columns from the Excel sheet if you don't need to fill those specific PDF fields for this batch.
+    * **Crucially**, fill the `_output_filename` column with the desired filename for each corresponding output PDF (e.g., `student1_assessment.pdf`). The `.pdf` extension is optional; it will be added if missing. **This column is mandatory.**
+    * For non-text fields (like checkboxes, radio buttons, or dropdowns), refer to the companion `_field_info.txt` file generated alongside the template. This file attempts to list the expected values.
+    * **Important:** PDF forms can be tricky. Common values for checkboxes/radio buttons are `/Yes` or `/On` (or another specific key listed in the info file). Dropdowns require the exact text value of the desired option. If the `_field_info.txt` is unclear or filling doesn't work as expected, you may need to:
+        * Inspect the PDF form fields directly using a PDF editor (like Adobe Acrobat) to find the exact 'export value'.
+        * Experiment by filling one row with different potential values (e.g., "Yes", "On", "/Yes", "/On", "True", "1") to see what works for your specific form.
+    * You can safely delete columns from the Excel sheet if you don't need to fill those specific PDF fields for the current batch run. The script only fills fields present in both the PDF and the Excel headers.
 3. **Run `fill-form` mode:** Provide the original PDF template, your populated Excel data file, and an empty output directory. Add the `--overwrite` flag if you need to output into a directory that already contains files.
 4. **Check Output:** The filled PDF files will be generated in the specified output directory. Review the console logs for a summary and any errors.
 
 ## License
 
-(Consider adding a license here, e.g., MIT License)
-
 ```txt
 MIT License
 
-Copyright (c) 2025 [Jasper Schelling / Rotterdam University of Applied Sciences]
+Copyright (c) 2025 Jasper Schelling / Rotterdam University of Applied Sciences
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
