@@ -146,7 +146,7 @@ def prepare_output_directory(dirpath: str, require_empty: bool = False, allow_ov
         try:
             os.makedirs(dirpath)
             logging.info(f"Created output directory: {dirpath}")
-        except OSError as e:
+        except (OSError, PermissionError) as e: # Broaden dir creation check
             logging.error(f"Error creating output directory '{dirpath}': {e}")
             sys.exit(1)
 
@@ -233,26 +233,37 @@ def generate_template_files(template_pdf_path: str, output_dir: str) -> None:
             for name, properties in fields.items():
                 # Field properties dictionary structure can vary. Use .get for safety.
                 field_type = properties.get('/FT') # Field Type (/Tx, /Btn, /Ch etc.)
+                export_values: List[str] = []
+                info: str = ""
 
                 # Checkbox/Radio Button (/Btn)
                 if field_type == '/Btn':
-                    # Appearance dictionary (/AP) -> Normal appearance (/N) often holds states like /Yes, /Off
-                    export_values = list(properties.get('/AP', {}).get('/N', {}).keys())
+                    # Export values are often the keys in the Normal Appearance dictionary (/AP/N)
+                    # Sometimes they might be in the field value itself (/V) if it's set.
+                    # We prioritize /AP/N keys as they represent states.
+                    ap_n_dict = properties.get('/AP', {}).get('/N', {})
+                    if isinstance(ap_n_dict, dict): # It should be a dictionary-like object
+                        export_values = list(ap_n_dict.keys())
+                    # Remove '/Off' if present, as it's usually the default unselected state
+                    if '/Off' in export_values:
+                       export_values.remove('/Off')
+
                     info = f"Field '{name}' (Button): Expected values "
-                    info += f"(e.g., {', '.join(export_values)})" if export_values else "(Check PDF for values like /Yes, /Off)"
+                    info += f"(e.g., {', '.join(export_values)})" if export_values else "(Check PDF for values like /Yes, /On)"
                     non_text_fields_info.append(info)
 
                 # Choice Field (/Ch) - Dropdown/Listbox
                 elif field_type == '/Ch':
-                     # Options are usually in /Opt array
+                     # Options are usually in /Opt array [[display, export], ...] or [export, ...]
                      options = properties.get('/Opt', [])
                      info = f"Field '{name}' (Choice): Expected values "
-                     export_values = []
                      if options:
-                         # Options can be strings or [display, export] pairs
-                         if isinstance(options[0], (list, tuple)) and len(options[0]) > 1:
-                             export_values = [str(opt[1]) for opt in options] # Get export value
-                         else: # Simple list of strings
+                         # Check if options are [display, export] pairs or just export values
+                         if isinstance(options[0], (list, tuple)) and len(options[0]) == 2:
+                             export_values = [str(opt[1]) for opt in options] # Use the second element as export value
+                         elif isinstance(options[0], (list, tuple)) and len(options[0]) == 1:
+                             export_values = [str(opt[0]) for opt in options] # Use the first element if it's a single-item list/tuple
+                         else: # Assume simple list of strings/values
                              export_values = [str(opt) for opt in options]
                      info += f": {', '.join(export_values)}" if export_values else "(Check PDF for options)"
                      non_text_fields_info.append(info)
@@ -264,12 +275,17 @@ def generate_template_files(template_pdf_path: str, output_dir: str) -> None:
                  try:
                      with open(txt_filepath, 'w', encoding='utf-8') as txtfile:
                          txtfile.write("Information about expected values for non-text PDF fields:\n")
+                         txtfile.write("Note: Checkbox/Radio Button values are often '/Yes' or the specific value shown.\n")
+                         txtfile.write("If unsure, test with a single row first.\n")
                          txtfile.write("=========================================================\n\n")
                          for line in non_text_fields_info:
                              txtfile.write(line + "\n")
                      logging.info(f"Generated field info file: {txt_filepath}")
+                 except OSError as e:
+                      # Log specific OS error but don't exit
+                      logging.error(f"OS error writing field info file '{txt_filepath}': {e}")
                  except Exception as e:
-                      # Log error but don't exit, Excel template might still be useful
+                      # Log other errors but don't exit
                       logging.error(f"Failed to write field info file '{txt_filepath}': {e}")
             else:
                  logging.info("No specific non-text field information found to generate.")
@@ -335,8 +351,8 @@ def fill_pdf_forms(template_pdf_path: str, data_file_path: str, output_dir: str,
             # data_only=True attempts to read cell values instead of formulas
             workbook = openpyxl.load_workbook(data_file_path, data_only=True)
             sheet = workbook.active # Use the active sheet
-        except InvalidFileException:
-             logging.error(f"Failed to open Excel file. Ensure it's a valid .xlsx file: {data_file_path}")
+        except (InvalidFileException, FileNotFoundError) as excel_open_error:
+             logging.error(f"Failed to open or find Excel file '{data_file_path}': {excel_open_error}")
              sys.exit(1)
         except Exception as e:
              logging.error(f"Error reading Excel file {data_file_path}: {e}")
@@ -444,18 +460,34 @@ def fill_pdf_forms(template_pdf_path: str, data_file_path: str, output_dir: str,
                 }
 
                 # --- PDF Writing for the current row ---
+                writer = None # Ensure writer is reset or defined
                 try:
                     # Create a fresh writer by cloning the template inside the loop
                     writer = PdfWriter(clone_from=template_pdf_path)
-                    # Fill the fields on the cloned writer object
-                    writer.update_page_form_field_values(
-                        writer.pages[0], # Assume fields are primarily on page 0
-                        fields=fill_data
-                    )
+
+                    # Iterate through all pages in the writer and update fields
+                    # update_page_form_field_values only works per page
+                    for page in writer.pages:
+                        try:
+                            # Attempt to update fields on the current page
+                            writer.update_page_form_field_values(
+                                page,
+                                fields=fill_data
+                            )
+                        except KeyError:
+                             # This can happen if a field in fill_data isn't on this specific page
+                             # which is expected. We can safely ignore this.
+                             pass
+                        except Exception as page_update_error:
+                            # Log if updating a specific page fails unexpectedly
+                            page_num = writer.get_page_number(page)
+                            logging.warning(f"Could not update fields on page {page_num+1} for {current_output_filename}: {page_update_error}")
+
 
                     # Remove /NeedAppearances flag if present (often helps compatibility)
-                    if "/NeedAppearances" in writer._root_object:
-                        writer._root_object.pop("/NeedAppearances")
+                    # Check if AcroForm exists before trying to access it
+                    if writer._root_object and "/AcroForm" in writer._root_object and "/NeedAppearances" in writer._root_object["/AcroForm"]:
+                         writer._root_object["/AcroForm"].pop("/NeedAppearances")
 
                     # Write the filled PDF to the output file
                     with open(output_filepath, "wb") as output_stream:
@@ -463,15 +495,33 @@ def fill_pdf_forms(template_pdf_path: str, data_file_path: str, output_dir: str,
 
                     success_count += 1 # Increment success only if write completes
 
-                except Exception as pdf_error:
-                    # Log error specific to PDF generation for this row
-                    logging.error(f"PDF generation failed for row {row_num} ({current_output_filename}): {pdf_error}")
-                    failed_rows.append((row_num, f"PDF write error: {pdf_error}"))
+                except pypdf_errors.PdfReadError as pdf_read_err:
+                    # Error reading the template during cloning
+                    logging.error(f"Template PDF read error during cloning for row {row_num} ({current_output_filename}): {pdf_read_err}")
+                    failed_rows.append((row_num, f"Template read error: {pdf_read_err}"))
+                except FileNotFoundError as fnf_error:
+                     # Error if output path is invalid during write
+                     logging.error(f"File not found error during PDF write for row {row_num} ({current_output_filename}): {fnf_error}")
+                     failed_rows.append((row_num, f"File path error: {fnf_error}"))
+                except PermissionError as perm_error:
+                     # Error if cannot write to output path
+                     logging.error(f"Permission error during PDF write for row {row_num} ({current_output_filename}): {perm_error}")
+                     failed_rows.append((row_num, f"File permission error: {perm_error}"))
+                except Exception as pdf_write_error:
+                    # Log other errors specific to PDF generation for this row
+                    logging.error(f"PDF generation failed for row {row_num} ({current_output_filename}): {pdf_write_error}")
+                    failed_rows.append((row_num, f"PDF write error: {pdf_write_error}"))
+                finally:
+                    # Ensure writer resources are potentially cleaned if applicable, though pypdf might handle this
+                    # For safety, setting to None might help garbage collection if errors occurred mid-process
+                    if writer:
+                        writer = None # Allow garbage collection
 
             except KeyError as key_error:
                  # Error if expected column header (used in logic) is missing
                  logging.error(f"Data processing failed for row {row_num}: Missing expected column header {key_error}.")
                  failed_rows.append((row_num, f"Missing column {key_error}"))
+            # Catch any other unexpected error while processing this row
             except Exception as row_error:
                 # Catch any other unexpected error while processing this row
                 logging.error(f"Unexpected error processing row {row_num}: {row_error}")
