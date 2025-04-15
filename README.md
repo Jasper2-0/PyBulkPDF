@@ -51,7 +51,7 @@ PyBulkPDF is a Python command-line tool designed to automate the process of fill
 
 The script operates in two main modes: `generate-template` and `fill-form`.
 
-### 1. Generate Template Files**
+### 1. Generate Template Files
 
 This mode analyzes your PDF form and creates the necessary Excel template and field info file.
 
@@ -64,7 +64,7 @@ python pybulkpdf.py generate-template \
 * `--template` (`-t`): Path to the input PDF form template. (Required)
 * `--output-dir` (`-o`): Directory where the generated `_template.xlsx` and `_field_info.txt` files will be saved. (Required)
 
-### 2. Fill PDF Forms**
+### 2. Fill PDF Forms
 
 This mode reads your populated Excel file and generates the filled PDFs.
 
