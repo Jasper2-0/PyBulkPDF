@@ -166,3 +166,5 @@ cython_debug/
 output-template/
 output-test-folder/
 templates/
+# Pytest
+test_results.txt
