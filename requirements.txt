@@ -2,3 +2,6 @@ pypdf
 openpyxl
 colorama
 tqdm
+# dev resources
+pytest
+pytest-mock
